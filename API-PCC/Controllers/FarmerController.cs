@@ -9,10 +9,12 @@ using API_PCC.Models;
 using API_PCC.Utils;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 using NuGet.Protocol.Core.Types;
 using System.Data;
 using System.Data.SqlClient;
+using System.Drawing.Printing;
 using static API_PCC.Controllers.BreedRegistryHerdController;
 using static API_PCC.Controllers.BuffAnimalsController;
 using static API_PCC.Controllers.UserManagementController;
@@ -95,8 +97,218 @@ namespace API_PCC.Controllers
         {
             try
             {
-                DataTable queryResult = db.SelectDb_WithParamAndSorting(QueryBuilder.buildFarmerSearch(searchFilter), null, populateSqlParameters(searchFilter));
-                var result = farmersPagedModel(searchFilter, queryResult);
+                var query = from f in _context.Tbl_Farmers
+                            join hf in _context.TblHerdFarmers on f.Id equals hf.FarmerId into hfGroup
+                            from hf in hfGroup.DefaultIfEmpty()
+                            join bh in _context.HBuffHerds on hf.HerdId equals bh.Id into bhGroup
+                            from bh in bhGroup.DefaultIfEmpty()
+                            join u in _context.TblUsersModels on f.User_Id equals u.Id into uGroup
+                            from u in uGroup.DefaultIfEmpty()
+                            where f.Is_Deleted == false
+                            select new
+                            {
+                                // Select all fields necessary for FarmerModel
+                                FarmerId = f.Id,
+                                FirstName = u != null ? u.Fname : string.Empty,
+                                LastName = u != null ? u.Lname : string.Empty,
+                                Address = u != null ? u.Address : string.Empty,
+                                TelephoneNumber = u != null ? u.Cno : string.Empty,  // Make sure it's present in TblUsersModels
+                                MobileNumber = u != null ? f.MobileNumber : string.Empty,  // Make sure it's present in TblUsersModels
+                                Email = u != null ? u.Email : string.Empty,
+                                UserId = u != null ? u.Id : 0,
+                                GroupId = u != null ? f.Group_Id : (int?)null,
+                                HerdId = hf != null ? hf.HerdId : (int?)null,
+                                Center = bh != null ? bh.Center : (int?)null,
+                                IsManager = u != null ? f.Is_Manager : false,  // Make sure IsManager exists in TblUsersModels
+                                FarmerClassificationId = f.FarmerClassification_Id,
+                                FarmerAffiliationId = f.FarmerAffliation_Id,
+                                FarmerBreedTypes = new List<string>(),  // Populate as needed from related tables
+                                FarmerFeedingSystems = new List<string>(),  // Populate as needed from related tables
+                                CreatedBy = f.Created_By,
+                                CreatedAt = f.Created_At,
+                                UpdatedBy = f.Updated_By,
+                                UpdatedAt = f.Updated_At,
+                                DeletedBy = f.Deleted_By,
+                                DeletedAt = f.Deleted_At,
+                                IsDeleted = f.Is_Deleted
+                            };
+                if (searchFilter.center is int centerId && centerId != 0)
+                {
+                    query = query.Where(x => x.Center == centerId);
+                }
+
+                // Herd filter
+                if (searchFilter.herdId.HasValue && searchFilter.herdId.Value != 0)
+                {
+                    query = query.Where(x => x.HerdId == searchFilter.herdId.Value);
+                }
+
+                // BreedType filter
+                if (searchFilter.breedType != null && searchFilter.breedType.Any())
+                {
+                    List<string> breedTypeIds;
+
+                    if (searchFilter.breedType.Count == 1 && searchFilter.breedType[0] == "0")
+                    {
+                        breedTypeIds = _context.ABreeds
+                                               .Where(b => b.DeleteFlag == false)
+                                               .Select(b => b.Id.ToString())
+                                               .ToList();
+                    }
+                    else
+                    {
+                        breedTypeIds = searchFilter.breedType;
+                    }
+
+                    query = query.Where(x =>
+                        _context.TblFarmerBreedTypes
+                                .Any(b => b.FarmerId == x.FarmerId && breedTypeIds.Contains(b.BreedTypeId.ToString())));
+                }
+
+                // Feeding System filter
+                if (searchFilter.feedingSystem != null && searchFilter.feedingSystem.Any())
+                {
+                    List<string> FeedingSystemId;
+                    if (searchFilter.feedingSystem.Count == 1 && searchFilter.feedingSystem[0] == "0")
+                    {
+                        FeedingSystemId = _context.tbl_FarmerFeedingSystem
+                                               .Where(b => b.Is_Deleted == false)
+                                               .Select(b => b.Id.ToString())
+                                               .ToList();
+                    }
+                    else
+                    {
+                        FeedingSystemId = searchFilter.feedingSystem;
+                    }
+
+                    query = query.Where(x =>
+                        _context.tbl_FarmerFeedingSystem
+                                .Any(b => b.Farmer_Id == x.FarmerId && FeedingSystemId.Contains(b.FeedingSystem_Id.ToString())));
+                    //query = query.Where(x =>
+                    //    _context.tbl_FarmerFeedingSystem
+                    //            .Any(fsys => fsys.Farmer_Id == x.Farmer.Id &&
+                    //                         searchFilter.feedingSystem.Contains(fsys.FeedingSystem_Id.ToString())));
+                }
+
+                // Search filter
+                if (!string.IsNullOrEmpty(searchFilter.searchValue))
+                {
+                    var keyword = searchFilter.searchValue.Trim();
+                    query = query.Where(x =>
+                        x.FirstName.Contains(keyword) || x.LastName.Contains(keyword));
+                }
+
+                // Apply filters (Center, Herd, BreedType, FeedingSystem, Search)
+                // ... [You already have the filters here]
+
+                // Apply pagination to the query
+
+        
+
+                //Execute the query and convert to a list
+                var items = query.ToList();
+
+                // Now, convert these results to a FarmerPagedModel
+                var farmerModels = items.Select(x =>
+                {
+                    // Initialize the farmer model
+                    var farmerModel = new TblFarmerVM
+                    {
+                        Id = x.FarmerId,
+                        FirstName = x.FirstName,
+                        LastName = x.LastName,
+                        Address = x.Address,
+                        TelephoneNumber = x.TelephoneNumber,
+                        MobileNumber = x.MobileNumber,
+                        Email = x.Email,
+                        UserId = x.UserId,
+                        GroupId = x.GroupId,
+                        HerdId = x.HerdId,
+                        Center = x.Center,
+                        IsManager = x.IsManager ?? false,
+                        FarmerClassificationId = x.FarmerClassificationId ?? 0,
+                        FarmerAffliationId = x.FarmerAffiliationId ?? 0,
+                        CreatedBy = x.CreatedBy ?? 0,
+                        UpdatedBy = x.UpdatedBy ?? default,
+                        UpdatedAt = x.UpdatedAt ?? default(DateTime?),
+                        DeletedBy = x.DeletedBy ?? default,
+                        DeletedAt = x.DeletedAt ?? default(DateTime?),
+                        IsDeleted = x.IsDeleted
+                    };
+
+                    // Now, let's fetch the FarmerBreedTypes and FarmerFeedingSystems using SQL queries
+                    try
+                    {
+                        // Fetch BreedType descriptions
+                        string breedTypeQuery = $@"
+            SELECT DISTINCT tbl_FarmerBreedType.BreedType_Id, A_Breed.Breed_Desc 
+            FROM tbl_FarmerBreedType 
+            JOIN A_Breed ON tbl_FarmerBreedType.BreedType_Id = A_Breed.id  
+            WHERE Farmer_Id = '{farmerModel.Id}'";
+
+                        DataTable farmerBreedTypeList = db.SelectDb(breedTypeQuery).Tables[0];
+                        var breedTypeCodes = new List<string>();
+                        foreach (DataRow row in farmerBreedTypeList.Rows)
+                        {
+                            breedTypeCodes.Add(row["Breed_Desc"].ToString());
+                        }
+
+                        // Fetch FeedingSystem descriptions
+                        string feedingSystemQuery = $@"
+            SELECT DISTINCT tbl_FarmerFeedingSystem.FeedingSystem_Id, H_Feeding_System.FeedingSystemDesc 
+            FROM tbl_FarmerFeedingSystem
+            JOIN H_Feeding_System ON tbl_FarmerFeedingSystem.FeedingSystem_Id = H_Feeding_System.id 
+            WHERE Farmer_Id = '{farmerModel.Id}'";
+
+                        DataTable farmerFeedingSystemList = db.SelectDb(feedingSystemQuery).Tables[0];
+                        var feedingTypeCodes = new List<string>();
+                        foreach (DataRow row in farmerFeedingSystemList.Rows)
+                        {
+                            feedingTypeCodes.Add(row["FeedingSystemDesc"].ToString());
+                        }
+
+                        // Set the breed and feeding systems on the farmer model
+                        farmerModel.FarmerBreedTypes = breedTypeCodes;
+                        farmerModel.FarmerFeedingSystems = feedingTypeCodes;
+                    }
+                    catch (Exception ex)
+                    {
+                        // Handle errors gracefully, log or handle as needed
+                        Console.WriteLine($"Error fetching breed types and feeding systems for FarmerId {farmerModel.Id}: {ex.Message}");
+                        farmerModel.FarmerBreedTypes = new List<string>(); // Ensure it's empty on error
+                        farmerModel.FarmerFeedingSystems = new List<string>(); // Ensure it's empty on error
+                    }
+
+                    return farmerModel;
+                }).ToList();
+                int pagesize = searchFilter.pageSize == 0 ? 10 : searchFilter.pageSize;
+                int page = searchFilter.page == 0 ? 1 : searchFilter.page;
+                var _items = (dynamic)null;
+
+                int totalItems = farmerModels.Count;
+                int totalPages = (int)Math.Ceiling((double)totalItems / pagesize);
+                _items = farmerModels.AsEnumerable().Skip((page - 1) * pagesize).Take(pagesize).ToList();
+
+  
+
+                var result = new List<FarmerPagedModel>();
+                var item = new FarmerPagedModel();
+
+                int pages = searchFilter.page == 0 ? 1 : searchFilter.page;
+                item.CurrentPage = searchFilter.page == 0 ? "1" : searchFilter.page.ToString();
+                int page_prev = pages - 1;
+
+                double t_records = Math.Ceiling(Convert.ToDouble(totalItems) / Convert.ToDouble(pagesize));
+                int page_next = searchFilter.page >= t_records ? 0 : pages + 1;
+                item.NextPage = _items.Count % pagesize >= 0 ? page_next.ToString() : "0";
+                item.PrevPage = pages == 1 ? "0" : page_prev.ToString();
+                item.TotalPage = t_records.ToString();
+                item.PageSize = pagesize.ToString();
+                item.TotalRecord = totalItems.ToString();
+                item.items = farmerModels;
+                result.Add(item);
+                //DataTable queryResult = db.SelectDb_WithParamAndSorting(QueryBuilder.buildFarmerSearch(searchFilter), null, populateSqlParameters(searchFilter));
+                //var result = farmersPagedModel(searchFilter);
                 return Ok(result); 
             }
             catch (Exception ex)

@@ -130,7 +130,19 @@ namespace API_PCC.Utils
 
         public static string buildFarmerSearch(FarmerSearchFilterModel searchFilterModel)
         {
-            string farmerSelect = Constants.DBQuery.HERDFARMERS_SELECT;
+
+
+            string farmerSelect = $@"SELECT
+	                                                            hf.Herd_Id,
+	                                                            bh.Center,
+	                                                            u.Fname,
+	                                                            u.Lname,
+	                                                            u.Address AS FarmerAddress,
+	                                                            u.Email AS FarmerEmail,
+	                                                            u.Cno,
+	                                                            f.*
+                                                            FROM Tbl_Farmers f ";
+
             string joins = @$"LEFT JOIN tbl_HerdFarmer hf ON f.Id = hf.Farmer_Id
                                 LEFT JOIN H_Buff_Herd bh ON hf.Herd_Id = bh.id
                                 LEFT JOIN tbl_UsersModel u ON f.User_Id = u.Id";
@@ -149,9 +161,16 @@ namespace API_PCC.Utils
 
             if (searchFilterModel.breedType != null && searchFilterModel.breedType.Any())
             {
+           
                 joins += @" LEFT JOIN tbl_FarmerBreedType 
                     ON f.Id = tbl_FarmerBreedType.Farmer_Id";
-
+                if (searchFilterModel.breedType != null &&
+                    searchFilterModel.breedType.Count == 1 &&
+                    searchFilterModel.breedType[0] == "0")
+                {
+                    var allBreedTypeIds = new List<string>();
+               
+                }
                 var breedTypeParams = string.Join(", ", searchFilterModel.breedType.Select((_, i) => $"@BreedType{i}"));
                 whereClause += $" AND tbl_FarmerBreedType.BreedType_Id IN ({breedTypeParams})";
             }
